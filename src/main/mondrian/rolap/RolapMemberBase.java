@@ -556,34 +556,53 @@ public class RolapMemberBase
 
     public boolean isHidden() {
         final RolapLevel rolapLevel = getLevel();
+        boolean selfValue;
         switch (rolapLevel.getHideMemberCondition()) {
         case Never:
-            return false;
+        {
+            selfValue = false;
+            break;
+        }
 
         case IfBlankName:
         {
             // If the key value in the database is null, then we use
             // a special key value whose toString() is "null".
             final String name = getName();
-            return name.equals(RolapUtil.mdxNullLiteral())
+            selfValue = name.equals(RolapUtil.mdxNullLiteral())
                 || Util.isBlank(name);
+            break;
         }
 
         case IfParentsName:
         {
             final Member parentMember = getParentMember();
             if (parentMember == null) {
-                return false;
+                selfValue = false;
+            } else {
+                final String parentName = parentMember.getName();
+                final String name = getName();
+                selfValue = (parentName == null ? "" : parentName)
+                    .equals(name == null ? "" : name);
             }
-            final String parentName = parentMember.getName();
-            final String name = getName();
-            return (parentName == null ? "" : parentName).equals(
-                name == null ? "" : name);
+            break;
         }
 
         default:
             throw Util.badValue(rolapLevel.getHideMemberCondition());
         }
+
+        if (selfValue) {
+            List<Member> children = getDimension().getSchema().getSchemaReader()
+                .getMemberChildren(this);
+            for (Member child : children) {
+                if (!child.isHidden()) {
+                    return false;
+                }
+            }
+        }
+
+        return selfValue;
     }
 
     public int getDepth() {
