@@ -76,12 +76,12 @@ public class SqlQuery {
 
     private boolean distinct;
 
-    private final ClauseList select;
-    private final FromClauseList from;
-    private final ClauseList where;
-    private final ClauseList groupBy;
-    private final ClauseList having;
-    private final ClauseList orderBy;
+    protected final ClauseList select;
+    protected final FromClauseList from;
+    protected final ClauseList where;
+    protected final ClauseList groupBy;
+    protected final ClauseList having;
+    protected final ClauseList orderBy;
     private final List<ClauseList> groupingSets;
     private final ClauseList groupingFunctions;
 
@@ -101,7 +101,7 @@ public class SqlQuery {
     private final List<String> fromAliases;
 
     /** The SQL dialect this query is to be generated in. */
-    private final Dialect dialect;
+    protected final Dialect dialect;
 
     /** Scratch buffer. Clear it before use. */
     private final StringBuilder buf;
@@ -117,7 +117,7 @@ public class SqlQuery {
         mapRootToRelations =
         new HashMap<MondrianDef.RelationOrJoin, List<RelInfo>>();
 
-    private final Map<String, String> columnAliases =
+    protected final Map<String, String> columnAliases =
         new HashMap<String, String>();
 
     private static final String INDENT = "    ";
@@ -785,6 +785,10 @@ public class SqlQuery {
         }
     }
 
+    public boolean isGenerateFormattedSql() {
+        return generateFormattedSql;
+    }
+
     private static class JoinOnClause {
         private final String condition;
         private final String left;
@@ -881,7 +885,7 @@ public class SqlQuery {
         }
     }
 
-    static class ClauseList extends ArrayList<String> {
+    protected static class ClauseList extends ArrayList<String> {
         protected final boolean allowDups;
 
         ClauseList(final boolean allowDups) {

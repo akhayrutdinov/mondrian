@@ -157,6 +157,7 @@ public abstract class RolapNativeSet extends RolapNative {
         private final SchemaReaderWithMemberReaderAvailable schemaReader;
         private final TupleConstraint constraint;
         private int maxRows = 0;
+        private boolean nonEmpty = false;
 
         public SetEvaluator(
             CrossJoinArg[] args,
@@ -185,17 +186,20 @@ public abstract class RolapNativeSet extends RolapNative {
                             new HighCardSqlTupleReader(constraint));
                     }
                     // Use the regular tuple reader.
-                    return executeList(
-                        new SqlTupleReader(constraint));
+                    return executeList(constraint);
                 }
             case MUTABLE_LIST:
             case LIST:
-                return executeList(new SqlTupleReader(constraint));
+                return executeList(constraint);
             default:
                 throw ResultStyleException.generate(
                     ResultStyle.ITERABLE_MUTABLELIST_LIST,
                     Collections.singletonList(desiredResultStyle));
             }
+        }
+
+        protected TupleList executeList(TupleConstraint constraint) {
+            return executeList(new SqlTupleReader(constraint));
         }
 
         protected TupleList executeList(final SqlTupleReader tr) {
@@ -219,6 +223,7 @@ public abstract class RolapNativeSet extends RolapNative {
             key.add(tr.getCacheKey());
             key.addAll(Arrays.asList(args));
             key.add(maxRows);
+            key.add(nonEmpty);
 
             TupleList result = cache.get(key);
             boolean hasEnumTargets = (tr.getEnumTargetCount() > 0);
@@ -388,6 +393,14 @@ public abstract class RolapNativeSet extends RolapNative {
 
         void setMaxRows(int maxRows) {
             this.maxRows = maxRows;
+        }
+
+        public boolean isNonEmpty() {
+            return nonEmpty;
+        }
+
+        public void setNonEmpty(boolean nonEmpty) {
+            this.nonEmpty = nonEmpty;
         }
     }
 

@@ -904,19 +904,28 @@ public class SqlTupleReader implements TupleReader {
      * @param whichSelect Position of this select statement in a union
      * @return SQL statement string and types
      */
-    Pair<String, List<SqlStatement.Type>> generateSelectForLevels(
+    protected Pair<String, List<SqlStatement.Type>> generateSelectForLevels(
         DataSource dataSource,
         RolapCube baseCube,
         WhichSelect whichSelect)
     {
         String s =
-            "while generating query to retrieve members of level(s) " + targets;
+                "while generating query to retrieve members of level(s) " + targets;
 
         // Allow query to use optimization hints from the table definition
         SqlQuery sqlQuery = SqlQuery.newQuery(dataSource, s);
         sqlQuery.setAllowHints(true);
 
+        generateSelectForLevels(baseCube, whichSelect, sqlQuery, constraint);
+        return sqlQuery.toSqlAndTypes();
+    }
 
+    protected void generateSelectForLevels(
+        RolapCube baseCube,
+        WhichSelect whichSelect,
+        SqlQuery sqlQuery,
+        TupleConstraint constraint)
+    {
         Evaluator evaluator = getEvaluator(constraint);
         AggStar aggStar = chooseAggStar(constraint, evaluator, baseCube);
 
@@ -930,13 +939,11 @@ public class SqlTupleReader implements TupleReader {
                     target.getLevel(),
                     baseCube,
                     whichSelect,
-                    aggStar);
+                    aggStar,
+                    constraint);
             }
         }
-
         constraint.addConstraint(sqlQuery, baseCube, aggStar);
-
-        return sqlQuery.toSqlAndTypes();
     }
 
     boolean targetIsOnBaseCube(TargetBase target, RolapCube baseCube) {
@@ -1039,7 +1046,17 @@ public class SqlTupleReader implements TupleReader {
         RolapLevel level,
         RolapCube baseCube,
         WhichSelect whichSelect,
-        AggStar aggStar)
+        AggStar aggStar) {
+        addLevelMemberSql(sqlQuery, level, baseCube, whichSelect, aggStar, constraint);
+    }
+
+    protected void addLevelMemberSql(
+        SqlQuery sqlQuery,
+        RolapLevel level,
+        RolapCube baseCube,
+        WhichSelect whichSelect,
+        AggStar aggStar,
+        TupleConstraint constraint)
     {
         RolapHierarchy hierarchy = level.getHierarchy();
 

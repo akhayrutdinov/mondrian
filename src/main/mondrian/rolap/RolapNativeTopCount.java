@@ -11,15 +11,23 @@
 */
 package mondrian.rolap;
 
+import mondrian.calc.TupleList;
 import mondrian.mdx.MemberExpr;
 import mondrian.olap.*;
 import mondrian.rolap.aggmatcher.AggStar;
 import mondrian.rolap.sql.*;
+import mondrian.rolap.sql.query.*;
+import mondrian.spi.Dialect;
+import mondrian.spi.DialectManager;
+import mondrian.util.Pair;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import javax.sql.DataSource;
+
+import static mondrian.rolap.sql.query.RightJoinBuilder.BASE_QUERY_ALIAS;
+import static mondrian.rolap.sql.query.RightJoinBuilder.JOIN_QUERY_ALIAS;
 
 /**
  * Computes a TopCount in SQL.
@@ -31,7 +39,7 @@ public class RolapNativeTopCount extends RolapNativeSet {
 
     public RolapNativeTopCount() {
         super.setEnabled(
-            MondrianProperties.instance().EnableNativeTopCount.get());
+                MondrianProperties.instance().EnableNativeTopCount.get());
     }
 
     static class TopCountConstraint extends SetConstraint {
@@ -47,7 +55,7 @@ public class RolapNativeTopCount extends RolapNativeSet {
             super(args, evaluator, true);
             this.orderByExpr = orderByExpr;
             this.ascending = ascending;
-            this.topCount = new Integer(count);
+            this.topCount = count;
         }
 
         /**
@@ -127,11 +135,10 @@ public class RolapNativeTopCount extends RolapNativeSet {
         FunDef fun,
         Exp[] args)
     {
-        boolean ascending;
-
         if (!isEnabled()) {
             return null;
         }
+
         if (!TopCountConstraint.isValidContext(
                 evaluator, restrictMemberTypes()))
         {
@@ -140,6 +147,7 @@ public class RolapNativeTopCount extends RolapNativeSet {
 
         // is this "TopCount(<set>, <count>, [<numeric expr>])"
         String funName = fun.getName();
+        final boolean ascending;
         if ("TopCount".equalsIgnoreCase(funName)) {
             ascending = false;
         } else if ("BottomCount".equalsIgnoreCase(funName)) {
@@ -216,12 +224,105 @@ public class RolapNativeTopCount extends RolapNativeSet {
             TupleConstraint constraint =
                 new TopCountConstraint(
                     count, combinedArgs, evaluator, orderByExpr, ascending);
-            SetEvaluator sev =
-                new SetEvaluator(cjArgs, schemaReader, constraint);
+
+            SetEvaluator sev;
+            if (evaluator.isNonEmpty() && args.length == 3) {
+                sev = new SetEvaluator(cjArgs, schemaReader, constraint);
+            } else {
+                sev = new NativeTopCountSetEvaluator(cjArgs, schemaReader, constraint);
+            }
             sev.setMaxRows(count);
+            sev.setNonEmpty(evaluator.isNonEmpty());
             return sev;
         } finally {
             evaluator.restore(savepoint);
+        }
+    }
+
+    private class NativeTopCountSetEvaluator extends SetEvaluator {
+        public NativeTopCountSetEvaluator(CrossJoinArg[] args, SchemaReader schemaReader, TupleConstraint constraint) {
+            super(args, schemaReader, constraint);
+        }
+
+        @Override
+        protected TupleList executeList(TupleConstraint constraint) {
+            return executeList(new TopCountSqlTupleReader(constraint));
+        }
+    }
+
+    private static class TopCountSqlTupleReader extends SqlTupleReader {
+        public TopCountSqlTupleReader(TupleConstraint constraint) {
+            super(constraint);
+        }
+
+        @Override
+        protected Pair<String, List<SqlStatement.Type>> generateSelectForLevels(DataSource dataSource, RolapCube baseCube, WhichSelect whichSelect) {
+            SqlQueryBuilder subselect = new SqlQueryBuilder(DialectManager.createDialect(dataSource, null));
+            subselect.setAllowHints(true);
+            super.generateSelectForLevels(baseCube, whichSelect, subselect, constraint);
+
+            Evaluator evaluator = getEvaluator(constraint);
+            AggStar aggStar = chooseAggStar(constraint, evaluator, baseCube);
+
+            CrossJoinBuilder builder = CrossJoinBuilder.builder(subselect.getDialect());
+
+            for (TargetBase target : targets) {
+                if (target.getSrcMembers() == null) {
+                    SqlQueryBuilder crossJoinQuery = new SqlQueryBuilder(subselect.getDialect());
+                    addLevelMemberSql(
+                            crossJoinQuery,
+                            target.getLevel(),
+                            baseCube,
+                            whichSelect,
+                            aggStar,
+                            DefaultTupleConstraint.instance());
+                    builder.append(crossJoinQuery);
+                }
+            }
+
+            SqlSelect crossJoin = builder.build();
+            if (crossJoin == null) {
+                return subselect.toSqlAndTypes();
+            }
+
+            SqlSelect result = RightJoinBuilder.builder(subselect.getDialect())
+                    .query(subselect.toSelect())
+                    .rightJoin(crossJoin)
+                .build(
+                        new RightJoinBuilder.Populator() {
+                            @Override
+                            public void populateOutput(SqlQuery query, SqlSelect baseQuery, SqlSelect joinQuery) {
+                                SqlUtils.addSelectFields(query, joinQuery.getOutputFields(), JOIN_QUERY_ALIAS);
+                                int populated = joinQuery.getOutputFields().size();
+                                int subQuerySize = baseQuery.getOutputFields().size();
+                                if (populated < subQuerySize) {
+                                    List<SelectElement> restFromBase = baseQuery.getOutputFields().subList(populated, subQuerySize);
+                                    SqlUtils.addSelectFields(query, restFromBase, BASE_QUERY_ALIAS);
+                                }
+                            }
+                        },
+                        new RightJoinBuilder.Mapper() {
+                            @Override
+                            public String map(List<SelectElement> baseQueryOutput, List<SelectElement> joinQueryOutput, Dialect dialect) {
+                                StringBuilder sb = new StringBuilder();
+                                addEqualsCondition(sb, baseQueryOutput.get(0), joinQueryOutput.get(0), dialect);
+                                for (int i = 1, len = joinQueryOutput.size(); i < len; i++) {
+                                    sb.append(" and ");
+                                    addEqualsCondition(sb, baseQueryOutput.get(i), joinQueryOutput.get(i), dialect);
+                                }
+                                return sb.toString();
+                            }
+
+                            private void addEqualsCondition(StringBuilder sb, SelectElement baseQueryOutput, SelectElement joinQueryOutput, Dialect dialect) {
+                                sb.append('(')
+                                    .append(dialect.quoteIdentifier(BASE_QUERY_ALIAS, baseQueryOutput.getAlias()))
+                                    .append('=')
+                                    .append(dialect.quoteIdentifier(JOIN_QUERY_ALIAS, joinQueryOutput.getAlias()))
+                                .append(')');
+                            }
+                        });
+
+            return Pair.of(result.getSql(), result.getOutputTypes());
         }
     }
 }
