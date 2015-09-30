@@ -90,6 +90,16 @@ public class SqlTupleReader implements TupleReader {
     private int missedMemberCount;
     private static final String UNION = "union";
     private int emptySets = 0;
+    // allow hints by default
+    private boolean allowHints = true;
+
+    public boolean isAllowHints() {
+        return allowHints;
+    }
+
+    public void setAllowHints(boolean allowHints) {
+        this.allowHints = allowHints;
+    }
 
     /**
      * Helper class for SqlTupleReader;
