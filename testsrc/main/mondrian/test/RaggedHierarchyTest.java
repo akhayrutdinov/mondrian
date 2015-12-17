@@ -20,7 +20,7 @@ import mondrian.spi.Dialect;
  * @author jhyde
  * @since Apr 19, 2004
  */
-public class RaggedHierarchyTest extends FoodMartTestCase {
+public class RaggedHierarchyTest extends InMemoryFoodMartTestBase {
     private void assertRaggedReturns(String expression, String expected) {
         getTestContext().withCube("[Sales Ragged]")
             .assertAxisReturns(expression, expected);
